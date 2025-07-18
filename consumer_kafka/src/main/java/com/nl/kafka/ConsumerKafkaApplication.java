@@ -2,6 +2,8 @@ package com.nl.kafka;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+import com.nl.kafka.app.initializer.EarlyInitializer;
 /**
  * Reference: https://www.geeksforgeeks.org/advance-java/spring-boot-integration-with-kafka/
  * 
@@ -24,7 +26,10 @@ public class ConsumerKafkaApplication {
 	 * D:\AppData\kafka_2.12-3.9.1>.\bin\windows\kafka-server-start.bat .\config\server.properties
 	 */
 	public static void main(String[] args) {
-		SpringApplication.run(ConsumerKafkaApplication.class, args);
+//		SpringApplication.run(ConsumerKafkaApplication.class, args);
+		SpringApplication springApplication = new SpringApplication(ConsumerKafkaApplication.class);
+		springApplication.addInitializers(new EarlyInitializer());
+		springApplication.run(args);
 	}
 
 }
