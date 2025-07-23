@@ -3,11 +3,16 @@ import java.io.File;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.nio.file.FileVisitOption;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Collectors;
 
+import org.apache.commons.io.FileUtils;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,21 +21,26 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import com.nl.kafka.constants.Constants;
+import com.nl.kafka.dto.BaseDTO;
 import com.nl.kafka.entity.KafkaProducerFileMetadata;
+import com.nl.kafka.repository.KafkaProducerFileMetadataRepository;
 import com.nl.kafka.service.ExcelToCsvService;
 import com.nl.kafka.service.KafkaProducerService;
 
 @EnableScheduling
 @Service
 public class ScheduledReadFile {
+
+    private final KafkaProducerFileMetadataRepository kafkaProducerFileMetadataRepository;
 	private final Logger LOG = LoggerFactory.getLogger(ScheduledReadFile.class);
 	
     private final ExcelToCsvService excelToCsvService;
     private final KafkaProducerService kafkaProducerService;
     //Constructor DI
-	public ScheduledReadFile(ExcelToCsvService excelToCsvService, KafkaProducerService kafkaProducerService) {
+	public ScheduledReadFile(ExcelToCsvService excelToCsvService, KafkaProducerService kafkaProducerService, KafkaProducerFileMetadataRepository kafkaProducerFileMetadataRepository) {
 		this.excelToCsvService = excelToCsvService;
 		this.kafkaProducerService = kafkaProducerService;
+		this.kafkaProducerFileMetadataRepository = kafkaProducerFileMetadataRepository;
 	}
 	
 	Workbook workbook;
@@ -179,5 +189,61 @@ public class ScheduledReadFile {
             }
         }
         LOG.info("Total XLS files converted to CSV: {} at path: {}", inProgress, outputDir);
+    }
+
+	@Scheduled(cron = "10 56 19 * * *")
+    public BaseDTO recall_cron_excel_files_by_status() {
+    	BaseDTO baseDTO = new BaseDTO();
+//    	List<String> statusList = Arrays.asList(Constants.Status.FAILED, Constants.Status.FAILED_SENT_TO_CONSUMER);
+    	List<String> statusList = Arrays.asList(Constants.Status.SENT_TO_CONSUMER);//Constants.Status.SENT_TO_CONSUMER
+    	List<KafkaProducerFileMetadata> list = kafkaProducerFileMetadataRepository.findAllByStatusIn(statusList);
+    	
+    	/**
+    	 * Code Ref:
+    	 * In Java, understanding how arguments are passed to methods is crucial. While the terms "call by value" and "call by reference" are used, Java's mechanism is often described as "pass by value" for both primitive types and object references. 
+			<b>Call by Value (for Primitive Data Types):</b>
+			When a primitive data type (like int, char, boolean, double, etc.) is passed to a method, a copy of its value is created and passed to the method's parameter.
+			Any modifications made to the parameter inside the method do not affect the original variable outside the method. 
+
+			<b>Call by Value (for Object References):</b>
+			When an object is passed to a method, a copy of the object's reference (memory address) is passed to the method's parameter.
+			This means that both the original variable and the method's parameter now point to the same object in memory.
+			Any modifications made to the state of the object (e.g., changing its fields) inside the method will be reflected in the original object outside the method.
+			However, if you try to make the parameter reference a different object within the method, this change will not affect the original variable's reference outside the method.
+    	 */
+    	
+    	kafkaProducerService.producer_recall_by_status_excel_metadata(baseDTO, list);//call by value(for Object References)
+    	LOG.info("recall_cron_excel_files_by_status: BaseDTO: {}", baseDTO);
+    	return baseDTO;
+    }
+	
+	/**
+	 * Files not exist in database.
+	 * Sometimes failed to read, those are processing here
+	 * @return 
+	 */
+	@Scheduled(cron = "30 24 18 * * *")
+    public BaseDTO prepare_non_existing_excel_files() {
+		BaseDTO baseDTO = new BaseDTO();
+		
+    	String path = "C:\\Users\\venkata.pulipati\\Downloads\\india-ifsc-codes-2-1510j";
+        File inputDir = new File(path);
+		
+        String[] extensions = {".xls"};
+        List<String> collectFileNames = FileUtils.listFiles(inputDir, extensions, true).stream().map(file -> {
+        	int dotIndex = file.getName().lastIndexOf(".");
+        	return file.getName().substring(0, dotIndex);
+        }).collect(Collectors.toList());
+        
+        if (collectFileNames == null || collectFileNames.size() == 0) {
+            System.out.println("No XLS files found.");
+            return baseDTO;
+        }
+        
+        List<KafkaProducerFileMetadata> list = kafkaProducerFileMetadataRepository.findAllByFileNameNotIn(collectFileNames);
+
+    	kafkaProducerService.producer_recall_non_exist_files_in_metadata(baseDTO, list);//call by value(for Object References)
+    	LOG.info("prepare_non_existing_excel_files: BaseDTO: {}", baseDTO);
+    	return baseDTO;
     }
 }

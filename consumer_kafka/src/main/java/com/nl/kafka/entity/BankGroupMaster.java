@@ -24,7 +24,7 @@ public class BankGroupMaster extends Auditable {
 	@Id
 	@GeneratedValue(strategy = GenerationType.IDENTITY)
 	@Column(name = "BANK_GROUP_MASTER_ID_PK")
-	private Long bankGroupPMasterID;
+	private Long bankGroupMasterID;
 	@Column(name = "BANK_NAME")
 	private String bankName;
 }

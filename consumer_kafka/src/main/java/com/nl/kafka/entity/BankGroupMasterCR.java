@@ -26,7 +26,7 @@ public class BankGroupMasterCR extends Auditable {
 	@Id
 	@GeneratedValue(strategy = GenerationType.IDENTITY)
 	@Column(name = "BANK_GROUP_MASTER_CR_ID_PK")
-	private Long bankGroupPMasterCrID;
+	private Long bankGroupMasterCrID;
 	@Column(name = "BANK_GROUP_MASTER_ID_FK")
 	private Long bankGroupMasterID;//Once record approved, this field should update
 	@CsvBindByName(column = "BANK")

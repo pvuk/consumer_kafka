@@ -7,6 +7,7 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.io.Reader;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -111,68 +112,109 @@ public class KafkaConsumerServiceImpl implements KafkaConsumerService{
  		} catch (EncryptedDocumentException | IOException e) {
  			e.printStackTrace();
  		}
-
+ 		
+ 		String fileName = message.getFileName();
+ 		
  		// Retrieving the number of sheets in the Workbook
- 		LOG.info("-------Workbook : {} has '{}' Sheets-----", message.getFileName(), workbook.getNumberOfSheets() );
+ 		LOG.info("-------Workbook : {} has '{}' Sheets-----", fileName, workbook.getNumberOfSheets() );
 
  		// Getting the Sheet at index zero
  		org.apache.poi.ss.usermodel.Sheet sheet = workbook.getSheetAt(0);
 
  		// Getting number of columns in the Sheet
- 		int noOfColumns = sheet.getRow(0).getLastCellNum();
- 		LOG.info("-------Sheet has '"+noOfColumns+"' columns------");
-
+ 		int noOfColumns = sheet.getRow(0).getLastCellNum();//Gets the index of the last cell contained in this row PLUS ONE
+ 		int physicalNumberOfCells = sheet.getRow(0).getPhysicalNumberOfCells();//Gets the number of defined cells (NOT number of cells in the actual row!). That is to say if only columns 0,4,5 have values then there would be 3.
+ 		int noOfNonEmptyHeaderCount = 0;
+ 		
+ 		int noOfDataRows = 0;//exclude header columns
  		// Using for-each loop to iterate over the rows and columns
  		for (Row row : sheet) {
+ 			
+ 			//TODO remove this lines
+ 	 		List<String> failedList = Arrays.asList("IFCB2009_130.xls");//, "IFCB2009_101.xls"
+ 	 		//, "IFCB2009_133.xls" Index 1996 out of bounds for length 1996
+ 	 		//, "IFCB2009_79.xls"
+ 	 		//FileName: IFCB2009_54.xls, FileId: 0ea5bcc9-19b1-40b1-bb93-bbef91ff64c9, Message: Index 255 out of bounds for length 17
+ 	 		//FileName: IFCB2009_97.xls, FileId: 4e28a6c8-87e7-4c6d-a501-da2b9169b93d, Message: Index 38249 out of bounds for length 38249
+
+ 	 		if(failedList.contains(fileName)) {
+ 	 			LOG.error("File "+ fileName +" Reading Failed. Row number: "+ row.getRowNum() +" contains columsn: "+ row.getLastCellNum());
+ 	 		}
+ 	 		
  			for (Cell cell : row) {
  				String cellValue = dataFormatter.formatCellValue(cell);
- 				list.add(cellValue);
+ 				if(!cellValue.isEmpty()) {
+ 	 				list.add(cellValue);
+ 	 				noOfNonEmptyHeaderCount++;
+ 				}
+ 				noOfDataRows++;
  			}
  		}
-
- 		// filling excel data and creating list as List<Invoice>
- 		List<BankMasterCR> bankMasterCRList = createList(list, noOfColumns);
- 		if(list != null && list.size() > 0) {
-			String bankName = bankMasterCRList.get(0).getBankName();
-			BankGroupMasterCR bankGroupMasterCR = bankGroupMasterCRRepository.findByBankName(bankName);
-			Long bankGroupPMasterCrID = null;
-			if(bankGroupMasterCR == null) {
-				bankGroupMasterCR = bankGroupMasterCRRepository.save(BankGroupMasterCR.builder().bankName(bankName).build());
-				LOG.info("New BankName: {} found, saved in BankGroupMasterCr", bankName);
-			}
-			bankGroupPMasterCrID = bankGroupMasterCR.getBankGroupPMasterCrID(); 
+ 		
+ 		LOG.info("-------Sheet has '"+noOfColumns+"' columns"
+ 				+ " :: physicalNumberOfCells: '"+ physicalNumberOfCells+"', "
+ 				+ " noOfNonEmptyHeaderCount: '"+ noOfNonEmptyHeaderCount +", noOfDataRows: '"+ noOfDataRows +"'"
+ 				+ "------");
+ 		
+ 		try {
+// 			noOfColumns = noOfNonEmptyHeaderCount;
+ 	 		// filling excel data and creating list as List<Invoice>
+ 	 		List<BankMasterCR> bankMasterCRList = createList(list, noOfColumns);
+ 	 		if(list != null && list.size() > 0) {
+ 				String bankName = bankMasterCRList.get(0).getBankName();
+ 				BankGroupMasterCR bankGroupMasterCR = bankGroupMasterCRRepository.findByBankName(bankName);
+ 				Long bankGroupMasterCrID = null;
+ 				if(bankGroupMasterCR == null) {
+ 					bankGroupMasterCR = bankGroupMasterCRRepository.save(BankGroupMasterCR.builder().bankName(bankName).build());
+ 					LOG.info("FileName: {}, New BankName: '{}' found, saved in BankGroupMasterCr", fileName, bankName);
+ 				}
+ 				bankGroupMasterCrID = bankGroupMasterCR.getBankGroupMasterCrID(); 
+ 				
+ 				for(BankMasterCR cr : bankMasterCRList) {
+ 					cr.setBankGroupMasterCrID(bankGroupMasterCrID);
+ 					cr.setKafkaProducerFileMetadataID(message.getFileId());
+ 				}
+ 				Map<Long, List<BankMasterCR>> collect = bankMasterCRList.stream()
+ 						.collect(Collectors.groupingBy(BankMasterCR::getBankGroupMasterCrID,
+ 								Collectors.mapping(bankMasterCr -> bankMasterCr, Collectors.toList())));
+ 				if(collect != null && collect.size() > 0) {
+ 					for(Map.Entry<Long, List<BankMasterCR>> map : collect.entrySet()) {
+ 						Long bankGroupMasterCrID2 = map.getKey();
+ 						List<BankMasterCR> newIfscCodeList = map.getValue();
+ 						List<String> oldIfscCodeList = bankMasterCRRepository.findAllByBankMasterCrID(bankGroupMasterCrID2);
+ 						/**
+ 						 * Code Ref: Filter two list, 1st list ifscode list not exist in 2nd list.
+ 						 * Saving filter list of new ifsc code data
+ 						 */
+ 						List<BankMasterCR> collectSave = newIfscCodeList.stream()
+ 								.filter(newBankMasterCR -> {
+ 									return !oldIfscCodeList.contains(newBankMasterCR.getIfscCode());
+ 								})
+ 								.collect(Collectors.toList());//Filter duplicate insert
+ 						
+ 						LOG.info("FileName: {}, Old Records: {}, New Records: {}, Saving Total Records: {}",
+ 								fileName,
+ 								(oldIfscCodeList != null ? oldIfscCodeList.size() : 0),
+ 								(newIfscCodeList != null ? newIfscCodeList.size() : 0),
+ 								(collectSave != null ? collectSave.size() : 0));
+ 						
+ 						if(collectSave.size() > 0) {
+ 							bankMasterCRRepository.saveAll(collectSave);
+ 	 						
+ 	 						message.setStatus(Constants.Status.SUCCESS);
+ 						}
+ 					}
+ 				} else {
+ 					LOG.warn("No data available for BankGroupName: {}, FileName: {}", bankGroupMasterCR.getBankName(), fileName);
+ 				}
+ 			}
+		} catch (Exception e) {
+			String errMessage = "Exception occurred while bind excel to entity";
+			message.setStatus(Constants.Status.FAILED_TO_PROCESS);
+			message.setErrorMessage(errMessage);
 			
-			for(BankMasterCR cr : bankMasterCRList) {
-				cr.setBankGroupMasterCrID(bankGroupPMasterCrID);
-				cr.setKafkaProducerFileMetadataID(message.getFileId());
-			}
-			Map<Long, List<BankMasterCR>> collect = bankMasterCRList.stream()
-					.collect(Collectors.groupingBy(BankMasterCR::getBankGroupMasterCrID,
-							Collectors.mapping(bankMasterCr -> bankMasterCr, Collectors.toList())));
-			if(collect != null && collect.size() > 0) {
-				for(Map.Entry<Long, List<BankMasterCR>> map : collect.entrySet()) {
-					Long bankGroupMasterCrID = map.getKey();
-					List<BankMasterCR> newIfscCodeList = map.getValue();
-					List<String> oldIfscCodeList = bankMasterCRRepository.findAllByBankMasterCrID(bankGroupMasterCrID);
-					/**
-					 * Code Ref: Filter two list, 1st list ifscode list not exist in 2nd list.
-					 * Saving filter list of new ifsc code data
-					 */
-					List<BankMasterCR> collectSave = newIfscCodeList.stream().filter(newBankMasterCR -> !oldIfscCodeList.contains(newBankMasterCR.getIfscCode())).collect(Collectors.toList());
-					LOG.info("Old Records: {}, New Records: {}, Saving Total Records: {}",
-							(oldIfscCodeList != null ? oldIfscCodeList.size() : 0),
-							(newIfscCodeList != null ? newIfscCodeList.size() : 0),
-							(collectSave != null ? collectSave.size() : 0));
-					bankMasterCRRepository.saveAll(collectSave);
-					
-					message.setStatus(Constants.Status.SUCCESS);
-				}
-			} else {
-				LOG.warn("No data available for BankGroupName: {}, FileName: {}", bankGroupMasterCR.getBankName(), message.getFileName());
-			}
+			LOG.error("readExcelAndSavetoDatabase: Error: {}, FileName: {}, FileId: {}, Message: {}", errMessage, fileName, message.getFileId(), e.getMessage());
 		}
- 		
- 		
  		
  		// Closing the workbook
  		try {
@@ -276,10 +318,10 @@ public class KafkaConsumerServiceImpl implements KafkaConsumerService{
 				if(bankGroupMasterCR != null) {
 					bankGroupMasterCR = bankGroupMasterCRRepository.save(BankGroupMasterCR.builder().bankName(bankName).build());
 
-					Long bankGroupPMasterCrID = bankGroupMasterCR.getBankGroupPMasterCrID(); 
+					Long bankGroupMasterCrID = bankGroupMasterCR.getBankGroupMasterCrID(); 
 					
 					list.forEach(cr -> {
-						cr.setBankGroupMasterCrID(bankGroupPMasterCrID);
+						cr.setBankGroupMasterCrID(bankGroupMasterCrID);
 						cr.setKafkaProducerFileMetadataID(message.getFileId());
 					});
 					Map<Long, List<BankMasterCR>> collect = list.stream()
@@ -287,9 +329,9 @@ public class KafkaConsumerServiceImpl implements KafkaConsumerService{
 									Collectors.mapping(bankMasterCr -> bankMasterCr, Collectors.toList())));
 					if(collect != null && collect.size() > 0) {
 						for(Map.Entry<Long, List<BankMasterCR>> map : collect.entrySet()) {
-							Long bankGroupMasterCrID = map.getKey();
+							Long bankGroupMasterCrID2 = map.getKey();
 							List<BankMasterCR> newIfscCodeList = map.getValue();
-							List<String> oldIfscCodeList = bankMasterCRRepository.findAllByBankMasterCrID(bankGroupMasterCrID);
+							List<String> oldIfscCodeList = bankMasterCRRepository.findAllByBankMasterCrID(bankGroupMasterCrID2);
 							/**
 							 * Code Ref: Filter two list, 1st list ifscode list not exist in 2nd list.
 							 * Saving filter list of new ifsc code data

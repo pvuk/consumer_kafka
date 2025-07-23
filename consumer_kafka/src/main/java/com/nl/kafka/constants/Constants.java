@@ -43,6 +43,9 @@ public class Constants {
 		public static final String FAILED = "FAILED";
 		public static final String IN_PROGRESS = "IN_PROGRESS";
 		public static final String PENDING = "PENDING";
+		public static final String SENT_TO_CONSUMER = "SENT_TO_CONSUMER";
+		public static final String FAILED_SENT_TO_CONSUMER = "FAILED_SENT_TO_CONSUMER";
+		public static final String FAILED_TO_PROCESS = "FAILED_TO_PROCESS";
 	}
 	
 	public interface PORT {
