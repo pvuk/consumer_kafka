@@ -3,7 +3,6 @@ import java.io.File;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-import java.nio.file.FileVisitOption;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.time.LocalDateTime;
@@ -222,7 +221,7 @@ public class ScheduledReadFile {
 	 * Sometimes failed to read, those are processing here
 	 * @return 
 	 */
-	@Scheduled(cron = "30 24 18 * * *")
+	@Scheduled(cron = "30 45 16 * * *")
     public BaseDTO prepare_non_existing_excel_files() {
 		BaseDTO baseDTO = new BaseDTO();
 		
@@ -230,19 +229,62 @@ public class ScheduledReadFile {
         File inputDir = new File(path);
 		
         String[] extensions = {".xls"};
-        List<String> collectFileNames = FileUtils.listFiles(inputDir, extensions, true).stream().map(file -> {
-        	int dotIndex = file.getName().lastIndexOf(".");
-        	return file.getName().substring(0, dotIndex);
-        }).collect(Collectors.toList());
+//        List<String> collectFileNames = FileUtils.listFiles(inputDir, extensions, true).stream().map(file -> {
+//        	int dotIndex = file.getName().lastIndexOf(".");
+//        	return file.getName().substring(0, dotIndex);
+//        }).collect(Collectors.toList());
+        
+		List<File> collectFileNames = FileUtils.listFiles(inputDir, extensions, true).stream()
+//				.map(file -> {
+//					int dotIndex = file.getName().lastIndexOf(".");
+//					return file.getName().substring(0, dotIndex);
+//				})
+				.collect(Collectors.toList());
         
         if (collectFileNames == null || collectFileNames.size() == 0) {
             System.out.println("No XLS files found.");
             return baseDTO;
         }
         
-        List<KafkaProducerFileMetadata> list = kafkaProducerFileMetadataRepository.findAllByFileNameNotIn(collectFileNames);
+        List<String> list = kafkaProducerFileMetadataRepository.getAllByFileName();
 
-    	kafkaProducerService.producer_recall_non_exist_files_in_metadata(baseDTO, list);//call by value(for Object References)
+		List<KafkaProducerFileMetadata> newExcelFileList = collectFileNames.stream()
+				.filter(file -> {
+					return !list.contains(file.getName());
+				}).map(file -> {
+					
+					String fileName = file.getName();
+					KafkaProducerFileMetadata metadata = KafkaProducerFileMetadata.builder()
+//            		.fileId(UUID.randomUUID())//PK Id, it will auto generate
+						.fileName(fileName)
+						.groupID(null)
+						.ingestionTimestamp(LocalDateTime.now())
+//            		.recordCount(lastRowNum)
+						.schema(null)
+						.sourceFilePath(file.getAbsolutePath())
+//						.sourceSystem(InetAddress.getLocalHost().getHostAddress())
+						.status(Constants.Status.PENDING)
+//            		.targetFilePath()
+//            		.topicID(null)
+						.build();
+					
+					try {
+						long size = Files.size(Paths.get(file.getAbsolutePath()));
+						metadata.setFileSizeBytes(size);
+						metadata.setSourceSystem(InetAddress.getLocalHost().getHostAddress());
+					} catch (UnknownHostException e) {
+//						e.printStackTrace();
+						LOG.error("prepare_non_existing_excel_files: Message: {}", e.getMessage());
+					} catch (IOException e) {
+//						e.printStackTrace();
+						LOG.error("prepare_non_existing_excel_files: Message: {}", e.getMessage());
+					} 
+					return metadata;
+				}).collect(Collectors.toList());
+        
+		LOG.info("Total new files found after Filter: {}, Existing files: {}", newExcelFileList.size(), list.size());
+		
+    	kafkaProducerService.producer_recall_non_exist_files_in_metadata(baseDTO, newExcelFileList);//call by value(for Object References)
     	LOG.info("prepare_non_existing_excel_files: BaseDTO: {}", baseDTO);
     	return baseDTO;
     }

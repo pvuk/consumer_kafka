@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.UUID;
 
 import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.CrudRepository;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,5 +23,8 @@ public interface KafkaProducerFileMetadataRepository extends CrudRepository<Kafk
 	@Transactional
 //	@Modifying
 	int deleteAllByStatus(String status);
+
+	@Query(value = "SELECT FILE_NAME FROM KAFKA_PRODUCER_FILE_METADATA", nativeQuery = true)
+	List<String> getAllByFileName();
 
 }
